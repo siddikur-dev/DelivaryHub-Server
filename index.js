@@ -35,9 +35,14 @@ async function run() {
       res.send(result);
     });
 
-    // Read Api
+    // Read Single All Api &  authentic user get only his data
     app.get("/parcels", async (req, res) => {
-      const result = await parcelsCollection.find().toArray();
+      const query = {};
+      const { email } = req.query;
+      if (email) {
+        query.senderEmail = email;
+      }
+      const result = await parcelsCollection.find(query).toArray();
       res.send(result);
     });
 
