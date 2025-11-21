@@ -4,6 +4,7 @@ const cors = require("cors");
 require("dotenv").config();
 const port = process.env.PORT || 3000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 // middleware
 app.use(cors());
@@ -62,6 +63,69 @@ async function run() {
       const parcelId = { _id: new ObjectId(id) };
       const result = await parcelsCollection.deleteOne(parcelId);
       res.send(result);
+    });
+
+    // Stripe Payment Gateway Integrate
+    // app.post("/create-checkout-session", async (req, res) => {
+    //   const paymentInfo = req.body;
+    //   const amount = parseInt(paymentInfo.cost) * 100;
+    //   const session = await stripe.checkout.sessions.create({
+    //     line_items: [
+    //       {
+    //         // Provide the exact Price ID (for example, price_1234) of the product you want to sell
+    //         price_data: {
+    //           currency: "USD",
+    //           unit_amount: amount,
+    //           product_data: {
+    //             name: paymentInfo.parcelName,
+    //           },
+    //         },
+    //         quantity: 1,
+    //       },
+    //     ],
+    //     customer_email: paymentInfo.senderEmail,
+    //     mode: "payment",
+    //     metadata: {
+    //       parcelId: paymentInfo.parcelId,
+    //     },
+    //     success_url: `${LIVE_SITE_DOMAIN}/dashboard/payment-success`,
+    //     cancel_url: `${LIVE_SITE_DOMAIN}/dashboard/payment-cancelled`,
+    //   });
+
+    //         res.send({ url: session.url })
+    // });
+    app.post("/create-checkout-session", async (req, res) => {
+      try {
+        const paymentInfo = req.body;
+        const amount = Number(paymentInfo.cost) * 100;
+
+        const session = await stripe.checkout.sessions.create({
+          line_items: [
+            {
+              price_data: {
+                currency: "USD",
+                unit_amount: amount,
+                product_data: {
+                  name: paymentInfo.parcelName,
+                },
+              },
+              quantity: 1,
+            },
+          ],
+          customer_email: paymentInfo.senderEmail,
+          mode: "payment",
+          metadata: {
+            parcelId: paymentInfo.parcelId,
+          },
+          success_url: `${process.env.LIVE_SITE_DOMAIN}/dashboard/payment-success`,
+          cancel_url: `${process.env.LIVE_SITE_DOMAIN}/dashboard/payment-cancelled`,
+        });
+
+        res.json({ url: session.url });
+      } catch (error) {
+        console.log("Stripe Checkout Error:", error);
+        res.status(500).json({ error: error.message });
+      }
     });
 
     // Send a ping to confirm a successful connection
