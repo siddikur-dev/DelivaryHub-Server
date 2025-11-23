@@ -246,13 +246,47 @@ async function run() {
       }
     });
 
-    app.get("/riders", verifyFBToken, async (req, res) => {
+    app.get("/riders", async (req, res) => {
       const query = {};
       if (req.query.status) {
         query.status = req.query.status;
       }
       const cursor = riderCollection.find(query);
       const result = await cursor.toArray();
+      res.send(result);
+    });
+
+    app.patch("/riders/:id", async (req, res) => {
+      const { status } = req.body;
+      const id = req.params.id;
+
+      const query = { _id: new ObjectId(id) };
+      const updatedDoc = {
+        $set: { status },
+      };
+
+      if (status === "approved") {
+        const email = req.body.email;
+        const userQuery = { email };
+        const updateUser = {
+          $set: {
+            role: "rider",
+          },
+        };
+        const userResult = await userCollection.updateOne(
+          userQuery,
+          updateUser
+        );
+      }
+      const result = await riderCollection.updateOne(query, updatedDoc);
+      res.send(result);
+    });
+
+    app.delete("/riders/:id", async (req, res) => {
+      const id = req.params.id;
+      const result = await riderCollection.deleteOne({
+        _id: new ObjectId(id),
+      });
       res.send(result);
     });
 
