@@ -8,6 +8,19 @@ const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 app.use(cors());
 app.use(express.json());
+const crypto = require("crypto");
+
+function generateTrackingId() {
+  const prefix = "TRK";
+
+  // format: YYYYMMDD
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+
+  // random hex (8 chars)
+  const randomHex = crypto.randomBytes(4).toString("hex").toUpperCase();
+
+  return `${prefix}-${date}-${randomHex}`;
+}
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.rfkbq1n.mongodb.net/?appName=Cluster0`;
 const client = new MongoClient(uri, {
@@ -24,10 +37,6 @@ async function run() {
     const deliveryDB = client.db("deliveryDB");
     const parcelsCollection = deliveryDB.collection("parcel");
     const paymentCollection = deliveryDB.collection("payments");
-
-    function generateTrackingId() {
-      return "TRK" + Math.floor(Math.random() * 1000000);
-    }
 
     app.post("/parcels", async (req, res) => {
       const parcel = req.body;
@@ -109,9 +118,11 @@ async function run() {
         console.log("Parcel ID", parcelId);
         const query = { _id: new ObjectId(parcelId) };
         const trackingId = generateTrackingId();
-
         const updateResult = await parcelsCollection.updateOne(query, {
-          $set: { paymentStatus: "paid", trackingId },
+          $set: {
+            paymentStatus: "paid",
+            trackingId,
+          },
         });
 
         if (updateResult.modifiedCount === 0) {
