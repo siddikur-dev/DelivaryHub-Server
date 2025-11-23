@@ -100,61 +100,74 @@ async function run() {
     });
 
     app.patch("/payment-success", async (req, res) => {
-      try {
-        const sessionId = req.query.session_id;
-        if (!sessionId) {
-          return res
-            .status(400)
-            .send({ success: false, message: "No session_id provided" });
-        }
+      const sessionId = req.query.session_id;
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
 
-        const session = await stripe.checkout.sessions.retrieve(sessionId);
+      // console.log('session retrieve', session)
+      const transactionId = session.payment_intent;
+      const query = { transactionId: transactionId };
 
-        if (session.payment_status !== "paid") {
-          return res.send({ success: false, message: "Payment not completed" });
-        }
+      const paymentExist = await paymentCollection.findOne(query);
+      console.log(paymentExist);
+      if (paymentExist) {
+        return res.send({
+          message: "already exists",
+          transactionId,
+          trackingId: paymentExist.trackingId,
+        });
+      }
 
-        const parcelId = session.metadata.parcelId;
-        console.log("Parcel ID", parcelId);
-        const query = { _id: new ObjectId(parcelId) };
-        const trackingId = generateTrackingId();
-        const updateResult = await parcelsCollection.updateOne(query, {
+      const trackingId = generateTrackingId();
+      console.log(trackingId);
+
+      if (session.payment_status === "paid") {
+        const id = session.metadata.parcelId;
+        const query = { _id: new ObjectId(id) };
+        const update = {
           $set: {
             paymentStatus: "paid",
-            trackingId,
+            trackingId: trackingId,
           },
-        });
+        };
 
-        if (updateResult.modifiedCount === 0) {
-          return res.send({
-            success: false,
-            message: "Parcel not found or already updated",
-          });
-        }
+        const result = await parcelsCollection.updateOne(query, update);
 
         const payment = {
           amount: session.amount_total / 100,
           currency: session.currency,
           customerEmail: session.customer_email,
-          parcelId,
+          parcelId: session.metadata.parcelId,
           parcelName: session.metadata.parcelName,
           transactionId: session.payment_intent,
           paymentStatus: session.payment_status,
           paidAt: new Date(),
+          trackingId: trackingId,
         };
 
-        const paymentResult = await paymentCollection.insertOne(payment);
+        if (session.payment_status === "paid") {
+          const resultPayment = await paymentCollection.insertOne(payment);
 
-        res.send({
-          success: true,
-          trackingId,
-          transactionId: session.payment_intent,
-          paymentInfo: paymentResult,
-        });
-      } catch (error) {
-        console.error(error);
-        res.status(500).send({ success: false, message: "Server error" });
+          res.send({
+            success: true,
+            modifyParcel: result,
+            trackingId: trackingId,
+            transactionId: session.payment_intent,
+            paymentInfo: resultPayment,
+          });
+        }
       }
+
+      res.send({ success: false });
+    });
+
+    app.get("/payments", async (req, res) => {
+      const email = req.query.email;
+      const query = {};
+      if (email) {
+        query.customerEmail = email;
+      }
+      const result = await paymentCollection.find(query).toArray();
+      res.send(result);
     });
 
     app.get("/", (req, res) => {
