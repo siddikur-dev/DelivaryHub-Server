@@ -10,6 +10,14 @@ app.use(cors());
 app.use(express.json());
 const crypto = require("crypto");
 
+const admin = require("firebase-admin");
+
+const serviceAccount = require("./delivaryhub-firebase-adminsdk.json");
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+
 function generateTrackingId() {
   const prefix = "TRK";
 
@@ -21,6 +29,16 @@ function generateTrackingId() {
 
   return `${prefix}-${date}-${randomHex}`;
 }
+
+// const firebase verification
+
+const VerifyFBToken = (req, res, next) => {
+  const token = req.headers?.authorization;
+  if (!token) {
+    return res.status(401).send({ message: "unAuthorized Access Mama" });
+  }
+  next();
+};
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.rfkbq1n.mongodb.net/?appName=Cluster0`;
 const client = new MongoClient(uri, {
@@ -160,9 +178,10 @@ async function run() {
       res.send({ success: false });
     });
 
-    app.get("/payments", async (req, res) => {
+    app.get("/payments", VerifyFBToken, async (req, res) => {
       const email = req.query.email;
       const query = {};
+
       if (email) {
         query.customerEmail = email;
       }
