@@ -32,12 +32,22 @@ function generateTrackingId() {
 
 // const firebase verification
 
-const VerifyFBToken = (req, res, next) => {
-  const token = req.headers?.authorization;
+const verifyFBToken = async (req, res, next) => {
+  const token = req.headers.authorization;
+
   if (!token) {
-    return res.status(401).send({ message: "unAuthorized Access Mama" });
+    return res.status(401).send({ message: "unauthorized access" });
   }
-  next();
+
+  try {
+    const idToken = token.split(" ")[1];
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    console.log("decoded in the token", decoded);
+    req.decoded_email = decoded.email;
+    next();
+  } catch (err) {
+    return res.status(401).send({ message: "unauthorized access" });
+  }
 };
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.rfkbq1n.mongodb.net/?appName=Cluster0`;
@@ -55,7 +65,17 @@ async function run() {
     const deliveryDB = client.db("deliveryDB");
     const parcelsCollection = deliveryDB.collection("parcel");
     const paymentCollection = deliveryDB.collection("payments");
+    const userCollection = deliveryDB.collection("users");
+    // user related api
+    app.post("/users", async (req, res) => {
+      const user = req.body;
+      user.role = "user";
+      user.createdAt = new Date();
+      const result = await userCollection.insertOne(user);
+      res.send(result);
+    });
 
+    // parcel related api
     app.post("/parcels", async (req, res) => {
       const parcel = req.body;
       parcel.createdAt = new Date();
@@ -86,6 +106,7 @@ async function run() {
       res.send(result);
     });
 
+    // payment related api
     app.post("/checkout-session", async (req, res) => {
       try {
         const { cost, parcelId, parcelName, senderEmail } = req.body;
@@ -178,14 +199,22 @@ async function run() {
       res.send({ success: false });
     });
 
-    app.get("/payments", VerifyFBToken, async (req, res) => {
+    app.get("/payments", verifyFBToken, async (req, res) => {
       const email = req.query.email;
       const query = {};
 
       if (email) {
         query.customerEmail = email;
+        // check email address
+        if (email !== req.decoded_email) {
+          return res.status(403).send({ message: "forbidden access" });
+        }
       }
-      const result = await paymentCollection.find(query).toArray();
+      const result = await paymentCollection
+        .find(query)
+        .sort({ paidAt: -1 })
+        .toArray();
+
       res.send(result);
     });
 
