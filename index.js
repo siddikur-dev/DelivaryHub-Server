@@ -66,10 +66,16 @@ async function run() {
     const parcelsCollection = deliveryDB.collection("parcel");
     const paymentCollection = deliveryDB.collection("payments");
     const userCollection = deliveryDB.collection("users");
+    const riderCollection = deliveryDB.collection("riders");
     // user related api
     app.post("/users", async (req, res) => {
       const user = req.body;
       user.role = "user";
+      const email = user.email;
+      const existUser = await userCollection.findOne({ email });
+      if (existUser) {
+        return res.send({ message: "This user exists" });
+      }
       user.createdAt = new Date();
       const result = await userCollection.insertOne(user);
       res.send(result);
@@ -215,6 +221,38 @@ async function run() {
         .sort({ paidAt: -1 })
         .toArray();
 
+      res.send(result);
+    });
+
+    // rider related api
+    app.post("/riders", async (req, res) => {
+      try {
+        const rider = req.body;
+        rider.status = "pending";
+        rider.createdAt = new Date();
+
+        const email = rider.email; // rider data থেকে email নাও
+        const existUser = await riderCollection.findOne({ email });
+
+        if (existUser) {
+          return res.status(400).send({ message: "This user already exists" });
+        }
+
+        const result = await riderCollection.insertOne(rider);
+        res.send(result);
+      } catch (error) {
+        console.error("Error adding rider:", error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    app.get("/riders", verifyFBToken, async (req, res) => {
+      const query = {};
+      if (req.query.status) {
+        query.status = req.query.status;
+      }
+      const cursor = riderCollection.find(query);
+      const result = await cursor.toArray();
       res.send(result);
     });
 
