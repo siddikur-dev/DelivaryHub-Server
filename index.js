@@ -30,8 +30,7 @@ function generateTrackingId() {
   return `${prefix}-${date}-${randomHex}`;
 }
 
-// const firebase verification
-
+// Firebase verification
 const verifyFBToken = async (req, res, next) => {
   const token = req.headers.authorization;
 
@@ -50,6 +49,8 @@ const verifyFBToken = async (req, res, next) => {
   }
 };
 
+
+
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.rfkbq1n.mongodb.net/?appName=Cluster0`;
 const client = new MongoClient(uri, {
   serverApi: {
@@ -67,6 +68,17 @@ async function run() {
     const paymentCollection = deliveryDB.collection("payments");
     const userCollection = deliveryDB.collection("users");
     const riderCollection = deliveryDB.collection("riders");
+
+    // verify  Admin Middleware
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email }
+      const user = await userCollection.findOne(query)
+      if (!user || user.role !== 'admin') {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      next()
+    }
     // user related api
     app.post("/users", async (req, res) => {
       const user = req.body;
@@ -81,9 +93,48 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/users", verifyFBToken, async (req, res) => {
-      const cursor = userCollection.find();
-      const users = await cursor.toArray();
+    app.get("/users", async (req, res) => {
+      const searchText = req.query.searchText || "";
+
+      let query = {};
+
+      if (searchText) {
+        query = {
+          $or: [
+            { displayName: { $regex: searchText, $options: "i" } },
+            { email: { $regex: searchText, $options: "i" } }
+          ]
+        };
+      }
+
+      const users = await userCollection
+        .find(query)
+        .sort({ createdAt: 1 })
+        .limit(5)
+        .toArray();
+
+      res.send(users);
+    });
+
+
+    app.get('/users/:email/role', async (req, res) => {
+      const email = req.params.email;
+      const query = { email };
+      const user = await userCollection.findOne(query);
+      res.send({ role: user?.role || 'user' });
+    })
+
+    app.patch("/users/:id/role", verifyFBToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id
+      const roleInfo = req.body;
+      const query = { _id: new ObjectId(id) };
+      const updatedDoc = {
+        $set: {
+          role: roleInfo.role,
+        },
+      };
+      const cursor = userCollection.updateOne(query, updatedDoc);
+      const users = await cursor;
       res.send(users);
     });
 
@@ -217,11 +268,13 @@ async function run() {
 
       if (email) {
         query.customerEmail = email;
-        // check email address
+
+        // check if token email matches the query email
         if (email !== req.decoded_email) {
           return res.status(403).send({ message: "forbidden access" });
         }
       }
+
       const result = await paymentCollection
         .find(query)
         .sort({ paidAt: -1 })
@@ -229,6 +282,7 @@ async function run() {
 
       res.send(result);
     });
+
 
     // rider related api
     app.post("/riders", async (req, res) => {
@@ -262,7 +316,7 @@ async function run() {
       res.send(result);
     });
 
-    app.patch("/riders/:id", async (req, res) => {
+    app.patch("/riders/:id", verifyFBToken, verifyAdmin, async (req, res) => {
       const { status } = req.body;
       const id = req.params.id;
 
