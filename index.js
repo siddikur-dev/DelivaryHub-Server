@@ -12,7 +12,9 @@ const crypto = require("crypto");
 
 const admin = require("firebase-admin");
 
-const serviceAccount = require("./delivaryhub-firebase-adminsdk.json");
+// index.js
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString("utf8");
+const serviceAccount = JSON.parse(decoded);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -381,7 +383,7 @@ async function run() {
       res.send({ success: false });
     });
 
-    app.get("/payments", verifyFBToken, async (req, res) => {
+    app.get("/payments", async (req, res) => {
       const email = req.query.email;
       const query = {};
 
@@ -389,9 +391,9 @@ async function run() {
         query.customerEmail = email;
 
         // check if token email matches the query email
-        if (email !== req.decoded_email) {
-          return res.status(403).send({ message: "forbidden access" });
-        }
+        // if (email !== req.decoded_email) {
+        //   return res.status(403).send({ message: "forbidden access" });
+        // }
       }
 
       const result = await paymentCollection
@@ -524,8 +526,8 @@ async function run() {
       res.send(result);
     })
 
-    await client.db("admin").command({ ping: 1 });
-    console.log("Successfully connected to MongoDB!");
+    // await client.db("admin").command({ ping: 1 });
+    // console.log("Successfully connected to MongoDB!");
   } finally {
   }
 }
