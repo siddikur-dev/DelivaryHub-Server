@@ -43,7 +43,7 @@ const verifyFBToken = async (req, res, next) => {
   try {
     const idToken = token.split(" ")[1];
     const decoded = await admin.auth().verifyIdToken(idToken);
-    console.log("decoded in the token", decoded);
+    // console.log("decoded in the token", decoded);
     req.decoded_email = decoded.email;
     next();
   } catch (err) {
@@ -329,7 +329,7 @@ async function run() {
       const query = { transactionId: transactionId };
 
       const paymentExist = await paymentCollection.findOne(query);
-      console.log(paymentExist);
+      // console.log(paymentExist);
       if (paymentExist) {
         return res.send({
           message: "already exists",
@@ -339,7 +339,7 @@ async function run() {
       }
 
       const trackingId = generateTrackingId();
-      console.log(trackingId);
+      // console.log(trackingId);
 
       if (session.payment_status === "paid") {
         const id = session.metadata.parcelId;
