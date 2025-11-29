@@ -68,6 +68,7 @@ async function run() {
     const paymentCollection = deliveryDB.collection("payments");
     const userCollection = deliveryDB.collection("users");
     const riderCollection = deliveryDB.collection("riders");
+    const trackingCollection = deliveryDB.collection("trackings");
 
     // verify  Admin Middleware
     const verifyAdmin = async (req, res, next) => {
@@ -78,6 +79,27 @@ async function run() {
         return res.status(403).send({ message: "forbidden access" });
       }
       next()
+    }
+    // verify  Rider Middleware
+    const verifyRider = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email }
+      const user = await userCollection.findOne(query)
+      if (!user || user.role !== 'rider') {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      next()
+    }
+
+    const logTracking = async (trackingId, status) => {
+      const log = {
+        trackingId,
+        status,
+        details: status.split('_').join(' '),
+        createdAt: new Date()
+      }
+      const result = await trackingCollection.insertOne(log);
+      return result
     }
     // user related api
     app.post("/users", async (req, res) => {
@@ -146,10 +168,35 @@ async function run() {
       res.send(result);
     });
 
+    app.get('/parcels/rider', async (req, res) => {
+      const { riderEmail, deliveryStatus } = req.query;
+      const query = {}
+
+      if (riderEmail) {
+        query.riderEmail = riderEmail
+      }
+      if (deliveryStatus !== 'parcel_delivered') {
+        // query.deliveryStatus = {$in: ['driver_assigned', 'rider_arriving']}
+        query.deliveryStatus = { $nin: ['parcel_delivered'] }
+      }
+      else {
+        query.deliveryStatus = deliveryStatus;
+      }
+
+      const cursor = parcelsCollection.find(query)
+      const result = await cursor.toArray();
+      res.send(result);
+    })
+
+
+
     app.get("/parcels", async (req, res) => {
       const query = {};
-      const { email } = req.query;
+      const { email, deliveryStatus } = req.query;
       if (email) query.senderEmail = email;
+      if (deliveryStatus) {
+        query.deliveryStatus = deliveryStatus;
+      }
       const options = { sort: { createdAt: -1 } };
       const result = await parcelsCollection.find(query, options).toArray();
       res.send(result);
@@ -161,6 +208,74 @@ async function run() {
       res.send(result);
     });
 
+    app.get('/parcels/delivery-status/stats', verifyFBToken, verifyRider, async (req, res) => {
+      const pipeline = [
+        {
+          $group: {
+            _id: "$deliveryStatus",
+            count: { $sum: 1 }
+          }
+        },
+        {
+          $project: {
+            _id: 0,
+            status: "$_id",
+            count: 1
+          }
+        }
+      ]
+      const result = await parcelsCollection.aggregate(pipeline).toArray();
+      res.send(result);
+    })
+
+    app.patch('/parcels/:id', async (req, res) => {
+      const { riderId, riderName, riderEmail, trackingId } = req.body;
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) }
+
+      const updatedDoc = {
+        $set: {
+          deliveryStatus: 'driver_assigned',
+          riderId: riderId,
+          riderName: riderName,
+          riderEmail: riderEmail
+        }
+      }
+
+      const result = await parcelsCollection.updateOne(query, updatedDoc)
+
+      // update rider information
+      const riderQuery = { _id: new ObjectId(riderId) }
+      const riderUpdatedDoc = {
+        $set: {
+          workStatus: 'in_delivery'
+        }
+      }
+      const riderResult = await riderCollection.updateOne(riderQuery, riderUpdatedDoc);
+      logTracking(trackingId, 'driver_assigned')
+      res.send(riderResult);
+
+    })
+
+    app.patch("/parcels/:id/status", async (req, res) => {
+      const query = { _id: new ObjectId(req.params.id) };
+
+      const { deliveryStatus, trackingId } = req.body;
+
+      const updatedDoc = {
+        $set: {
+          deliveryStatus
+        }
+      };
+
+      const result = await parcelsCollection.updateOne(query, updatedDoc);
+      logTracking(trackingId, deliveryStatus)
+      res.send(result)
+    });
+
+
+
+
     app.delete("/parcels/:id", async (req, res) => {
       const id = req.params.id;
       const result = await parcelsCollection.deleteOne({
@@ -168,6 +283,8 @@ async function run() {
       });
       res.send(result);
     });
+
+
 
     // payment related api
     app.post("/checkout-session", async (req, res) => {
@@ -228,6 +345,7 @@ async function run() {
         const update = {
           $set: {
             paymentStatus: "paid",
+            deliveryStatus: "pending-pickup",
             trackingId: trackingId,
           },
         };
@@ -249,6 +367,7 @@ async function run() {
         if (session.payment_status === "paid") {
           const resultPayment = await paymentCollection.insertOne(payment);
 
+          logTracking(trackingId, "pending-pickup")
           res.send({
             success: true,
             modifyParcel: result,
@@ -306,39 +425,82 @@ async function run() {
       }
     });
 
-    app.get("/riders", async (req, res) => {
-      const query = {};
-      if (req.query.status) {
-        query.status = req.query.status;
+    app.get('/riders', async (req, res) => {
+      const { status, district, workStatus } = req.query;
+      const query = {}
+
+      if (status) {
+        query.status = status;
       }
-      const cursor = riderCollection.find(query);
-      const result = await cursor.toArray();
-      res.send(result);
-    });
+      if (workStatus) {
+        query.workStatus = workStatus
+      }
 
-    app.patch("/riders/:id", verifyFBToken, verifyAdmin, async (req, res) => {
-      const { status } = req.body;
-      const id = req.params.id;
+      // Build base query first
+      let finalQuery = { ...query };
 
-      const query = { _id: new ObjectId(id) };
-      const updatedDoc = {
-        $set: { status },
-      };
-
-      if (status === "approved") {
-        const email = req.body.email;
-        const userQuery = { email };
-        const updateUser = {
-          $set: {
-            role: "rider",
-          },
+      // If district is provided, use $and with $or for district matching
+      if (district) {
+        const districtCondition = {
+          $or: [
+            { district: district },
+            { riderDistrict: district }
+          ]
         };
-        const userResult = await userCollection.updateOne(
-          userQuery,
-          updateUser
-        );
+
+        // If we have other conditions, combine with $and
+        if (Object.keys(query).length > 0) {
+          finalQuery = {
+            $and: [
+              query,
+              districtCondition
+            ]
+          };
+        } else {
+          finalQuery = districtCondition;
+        }
+      }
+
+      const result = await riderCollection.find(finalQuery).toArray();
+      res.send(result);
+    })
+
+    app.get('/riders/delivery-per-day', async (req, res) => {
+      const email = req.query.email
+      const pipeline = [
+        {
+          $match: {
+            riderEmail: email,
+            deliveryStatusz: 'parcel_delivered'
+          }
+        }
+      ]
+      const result = await parcelsCollection.aggregate(pipeline).toArray();
+      res.send(result);
+    })
+
+    app.patch('/riders/:id', verifyFBToken, verifyAdmin, async (req, res) => {
+      const status = req.body.status;
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) }
+      const updatedDoc = {
+        $set: {
+          status: status,
+          workStatus: 'available'
+        }
       }
       const result = await riderCollection.updateOne(query, updatedDoc);
+      if (status === 'approved') {
+        const email = req.body.email;
+        const userQuery = { email }
+        const updateUser = {
+          $set: {
+            role: 'rider'
+          }
+        }
+        const userResult = await userCollection.updateOne(userQuery, updateUser);
+      }
+
       res.send(result);
     });
 
@@ -353,6 +515,14 @@ async function run() {
     app.get("/", (req, res) => {
       res.send("Delivery Hub Server Running!");
     });
+
+    // tracking related api 
+    app.get('/trackings/:trackingId/logs', async (req, res) => {
+      const trackingId = req.params.trackingId;
+      const query = { trackingId };
+      const result = await trackingCollection.find(query).toArray();
+      res.send(result);
+    })
 
     await client.db("admin").command({ ping: 1 });
     console.log("Successfully connected to MongoDB!");
